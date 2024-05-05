@@ -1,0 +1,202 @@
+
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Apr 27 22:52:40 2024
+
+@author: KGupta
+"""
+#%%================ Packages ====================================
+# Packages for Modeling and Pre-processing 
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn import metrics, linear_model
+from sklearn.ensemble import RandomForestRegressor
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LogisticRegression
+# Packages for paths, graphing, math, statistics and time
+import seaborn as sns
+import pandas as pd 
+import numpy as np
+import time
+import os
+
+#import tkinter as tk
+#from tkinter import filedialog
+#root = tk.Tk()
+#root.withdraw()
+
+#%% Loading data ===========================================================
+#main_dir = filedialog.askdirectory(parent=root,initialdir="//",title='Pick a directory for the project')
+main_dir=r'C:\Users\KGupta\Documents\Digital Agriculture\PP Digital AG'
+#main_dir='G:/My Drive/Collaborations/01_Current/Digital_Ag/Digital_Ag_Class/01_General/Notes/04_MachineLearning/Random_Forest/Python'
+df = pd.read_csv(main_dir+'/Data/pheno_sorted.csv')
+df1 = pd.read_csv(main_dir+'/Data/M_clean.csv')
+merged_df = pd.merge(df, df1, on='germplasmName', how='inner')
+
+#%% Removing entries with missing values 
+merged_df=merged_df.dropna()
+
+#%% Description of the dataset and the columns, re-arranging so that Yield is first ========================
+cols = list(merged_df)
+cols.insert(0, cols.pop(cols.index('predicted.value')))
+merged_df=merged_df.loc[:,cols]
+df2=merged_df.describe()
+
+#%% Training and test separations ===============================================
+X=merged_df.iloc[:,1:len(merged_df.columns)].values
+X = np. delete(X, 0, axis = 1)
+y= merged_df.iloc[:,0].values.flatten()
+
+#%%==== 
+rf_errors = []
+regr_errors = []
+
+# Define total number of iterations and batch size
+total_iterations = 50
+batch_size = 10
+
+# Process iterations in batches
+for batch_start in range(0, total_iterations, batch_size):
+    batch_end = min(batch_start + batch_size, total_iterations)  # Determine end index of the current batch
+    
+    # Iterate through the current batch of iterations
+    for i in range(batch_start, batch_end):
+        # Split data into training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=True, random_state=i)
+        
+        # Standardize the features using StandardScaler
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        # RandomForestRegressor with hyperparameter tuning
+        param_grid_rf = {
+            'n_estimators': [100, 500, 1000],
+            'max_depth': [None, 10, 20],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4]
+        }
+
+        rf_regressor = RandomForestRegressor(random_state=0)
+        grid_search_rf = GridSearchCV(rf_regressor, param_grid_rf, cv=5, scoring='neg_mean_squared_error', n_jobs=-1)
+        grid_search_rf.fit(X_train_scaled, y_train)
+
+        # Get the best RandomForestRegressor model from GridSearchCV
+        best_rf_model = grid_search_rf.best_estimator_
+
+        # Evaluate RandomForestRegressor model
+        RF_pred = best_rf_model.predict(X_test_scaled)
+        rf_mse = metrics.mean_squared_error(y_test, RF_pred)
+        rf_errors.append(rf_mse)
+
+        # LinearRegression model
+        regr = linear_model.LinearRegression()
+        regr.fit(X_train_scaled, y_train)
+
+        # Evaluate LinearRegression model
+        LR_pred = regr.predict(X_test_scaled)
+        lr_mse = metrics.mean_squared_error(y_test, LR_pred)
+        regr_errors.append(lr_mse)
+
+    # Calculate mean error metrics for the current batch
+    mean_rf_error = np.mean(rf_errors[-batch_size:])  # Mean RandomForestRegressor MSE for the current batch
+    mean_regr_error = np.mean(regr_errors[-batch_size:])  # Mean LinearRegression MSE for the current batch
+
+    print(f"Batch [{batch_start+1}-{batch_end}]:")
+    print(f"Mean RandomForestRegressor Mean Squared Error: {mean_rf_error}")
+    print(f"Mean LinearRegression Mean Squared Error: {mean_regr_error}")
+    print()  # Print newline for readability
+
+# Final aggregate results
+overall_mean_rf_error = np.mean(rf_errors)
+overall_mean_regr_error = np.mean(regr_errors)
+
+print("Overall Mean RandomForestRegressor Mean Squared Error:", overall_mean_rf_error)
+print("Overall Mean LinearRegression Mean Squared Error:", overall_mean_regr_error)
+#%%==== 
+Result_errors1=pd.DataFrame({'Random_Forest':rf_errors,"Simple_Regression":regr_errors})
+valid_regr_errors = [err for err in regr_errors if err < 1e10]
+filtered_result_errors = Result_errors1[Result_errors1['Simple_Regression'] < 1e10]
+#Result_errors1.to_csv(main_dir+'\Results\Errors.csv')
+
+# Calculate predictions for each best model
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=None)
+RF_pred=best_rf_model.predict(X_test)
+
+# Plot scatter plots for each model
+plt.figure(figsize=(16, 4))
+
+# Random Forest
+plt.subplot(1, 3, 1)
+plt.scatter(y_test, RF_pred, cmap='viridis', alpha=0.5)
+plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--')
+plt.xlabel('Measured Yield')
+plt.ylabel('Predicted Yield (Random Forest)')
+plt.title('Measured vs Predicted Yield (Random Forest)')
+plt.text(0.05, 0.95, f'RMSE: {overall_mean_rf_error:.2f}\nMean Y',  # Using f-string for formatting
+         transform=plt.gca().transAxes, fontsize=10, verticalalignment='top', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
+plt.show()
+
+#%% Computes the most important features in the RF
+feature_importances=best_rf_model.feature_importances_
+most_important_indices = feature_importances.argsort()[:][::-20]  # Change 10 to the desired number of features
+merged_df = merged_df.drop(df.columns[[0, 1, 2]], axis=1)
+Important_Input=merged_df.iloc[:,most_important_indices]
+most_important_features=Important_Input.columns.tolist()
+
+#%% Plot feature importances for the RF
+plt.figure(figsize=(10, 6))
+plt.barh(range(len(most_important_features)), feature_importances[most_important_indices], align='center')
+plt.yticks(range(len(most_important_features)), most_important_features)
+plt.xlabel('Feature Importance')
+plt.ylabel('Features')
+plt.title('Most Significant Predictors for Random Forest')
+plt.show()
+
+#%% calculating mean 
+mean_rf_error = np.mean(rf_errors)
+mean_regr_error = np.mean(valid_regr_errors)
+
+# Create a DataFrame for mean errors
+mean_errors_df = pd.DataFrame({
+    'Model': ['Random Forest', 'Simple Regression'],
+    'Mean Error': [mean_rf_error, mean_regr_error]
+})
+
+# Plotting the bar plot
+plt.figure(figsize=(8, 6))
+sns.barplot(x='Model', y='Mean Error', data=mean_errors_df)
+plt.title('Mean Error Comparison (Random Forest vs Simple Regression)')
+plt.ylabel('Mean Squared Error (MSE)')
+plt.show()
+
+
+# Plotting the scatter plot of filtered error values
+plt.figure(figsize=(8, 6))
+sns.scatterplot(data=filtered_result_errors, marker='o', s=100)
+plt.title('Comparison of Error Values (Random Forest vs Simple Regression)')
+plt.xlabel('Model')
+plt.ylabel('Mean Squared Error (MSE)')
+plt.xticks(ticks=[0, 1], labels=filtered_result_errors.columns)  # Customize x-axis ticks
+plt.show()
+
+# Create a figure and axes
+fig, ax = plt.subplots()
+
+# Plotting a boxplot of RMSE values for Random Forest and Simple Regression (with outliers removed)
+ax.boxplot(Result_errors1.values, showfliers=False)
+ax.set_title('Side by Side Boxplot of RMSE for Different Models')
+ax.set_xlabel('Predictive Models')
+ax.set_ylabel('Root Mean Square Errors')
+xticklabels = ['Random Forest', 'Simple Regression']
+ax.set_xticklabels(xticklabels)
+ax.yaxis.grid(True)
+plt.show()
+
+#%%====
+Res=Result_errors1.describe()
+Res.to_csv(main_dir+'/Results/Error_description.csv')
